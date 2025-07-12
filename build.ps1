@@ -14,11 +14,11 @@ Invoke-ps2exe -inputFile "playlistifier_unified.ps1" `
               -noConfigFile `
               -requireAdmin:$false `
               -title "Playlistifier" `
-              -description "Universal Playlist Converter" `
-              -company "Your Company" `
+              -description "Universal Playlist Converter - Spotify & YouTube to MP3" `
+              -company "WACOMalt" `
               -product "Playlistifier" `
-              -copyright "Copyright 2024" `
-              -version "1.0.0.0"
+              -copyright "Copyright 2025" `
+              -version "0.2.0.0"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Build completed successfully!" -ForegroundColor Green

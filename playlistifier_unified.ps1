@@ -54,6 +54,9 @@ if (-not (Test-DirectoryWritable $exeDir)) {
 # Initial output directory (will be checked for writability during playlist processing)
 $outputDir = Get-Location
 
+# Application version
+$APP_VERSION = "0.2"
+
 # Initialize persistent variables outside main loop
 $outputFile = $null
 $playlistSource = $null
@@ -67,8 +70,8 @@ do {
 
     # Check if URL parameter is provided and playlist not already processed
     if ([string]::IsNullOrWhiteSpace($PlaylistUrl) -and -not $playlistProcessed) {
-        Write-Host "`nUniversal Playlist Converter" -ForegroundColor DarkMagenta
-        Write-Host "===========================" -ForegroundColor DarkMagenta
+        Write-Host "`nUniversal Playlist Converter v$APP_VERSION" -ForegroundColor DarkMagenta
+        Write-Host "=====================================" -ForegroundColor DarkMagenta
         Write-Host "`nSupported formats:" -ForegroundColor DarkMagenta
         Write-Host "  • Spotify: https://open.spotify.com/playlist/..." -ForegroundColor Green
         Write-Host "  • YouTube: https://www.youtube.com/playlist?list=..." -ForegroundColor Green
