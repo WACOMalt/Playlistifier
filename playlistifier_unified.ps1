@@ -477,6 +477,78 @@ function Get-SpotifyAccessTokenOAuth {
 }
 
 
+# Function to get Spotify album info
+function Get-SpotifyAlbumInfo {
+    param($AlbumId, $AccessToken)
+    
+    $headers = @{ 'Authorization' = "Bearer $AccessToken" }
+    
+    try {
+        $response = Invoke-RestMethod -Uri "https://api.spotify.com/v1/albums/$AlbumId" -Headers $headers
+        return @{
+            Name = $response.name
+            Artist = ($response.artists | ForEach-Object { $_.name }) -join ', '
+            TrackCount = $response.total_tracks
+        }
+    }
+    catch {
+        Write-Host "Error getting album info: $($_.Exception.Message)" -ForegroundColor Red
+        return $null
+    }
+}
+
+# Function to get Spotify album tracks
+function Get-SpotifyAlbumTracks {
+    param($AlbumId, $AccessToken)
+    
+    $headers = @{ 'Authorization' = "Bearer $AccessToken" }
+    $tracks = @()
+    $offset = 0
+    $limit = 50
+    
+    do {
+        try {
+            $response = Invoke-RestMethod -Uri "https://api.spotify.com/v1/albums/$AlbumId/tracks?offset=$offset&limit=$limit" -Headers $headers
+            foreach ($item in $response.items) {
+                if ($item.type -eq 'track') {
+                    $artistNames = ($item.artists | ForEach-Object { $_.name }) -join ', '
+                    $tracks += @{
+                        Name = $item.name
+                        Artists = $artistNames
+                    }
+                }
+            }
+            $offset += $limit
+        }
+        catch {
+            Write-Host "Error getting album tracks: $($_.Exception.Message)" -ForegroundColor Red
+            break
+        }
+    } while ($response.next)
+    
+    return $tracks
+}
+
+# Function to get Spotify track info
+function Get-SpotifyTrackInfo {
+    param($TrackId, $AccessToken)
+    
+    $headers = @{ 'Authorization' = "Bearer $AccessToken" }
+    
+    try {
+        $response = Invoke-RestMethod -Uri "https://api.spotify.com/v1/tracks/$TrackId" -Headers $headers
+        $artistNames = ($response.artists | ForEach-Object { $_.name }) -join ', '
+        return @{
+            Name = $response.name
+            Artists = $artistNames
+        }
+    }
+    catch {
+        Write-Host "Error getting track info: $($_.Exception.Message)" -ForegroundColor Red
+        return $null
+    }
+}
+
 # Function to get Spotify playlist info
 function Get-SpotifyPlaylistInfo {
     param($PlaylistId, $AccessToken)
@@ -657,9 +729,8 @@ function Get-YouTubePlaylistVideosFallback {
     }
 }
 
-        # Detect playlist type
+        # Detect content type
         if ($PlaylistUrl -match "spotify\.com") {
-            Write-Host "Detected: Spotify Playlist" -ForegroundColor Green
             $playlistSource = "Spotify"
             
             if (-not $useSpotifyAPI) {
@@ -668,19 +739,34 @@ function Get-YouTubePlaylistVideosFallback {
                 return
             }
             
-            Write-Host "Converting Spotify playlist to YouTube URLs...`n"
-
-            # Extract playlist ID
+            # Determine Spotify content type and extract ID
             if ($PlaylistUrl -match "playlist/([a-zA-Z0-9]+)") {
-                $playlistId = $matches[1]
+                Write-Host "Detected: Spotify Playlist" -ForegroundColor Green
+                $spotifyType = "playlist"
+                $spotifyId = $matches[1]
+                Write-Host "Converting Spotify playlist to YouTube URLs...`n"
+            } elseif ($PlaylistUrl -match "album/([a-zA-Z0-9]+)") {
+                Write-Host "Detected: Spotify Album" -ForegroundColor Green
+                $spotifyType = "album"
+                $spotifyId = $matches[1]
+                Write-Host "Converting Spotify album to YouTube URLs...`n"
+            } elseif ($PlaylistUrl -match "track/([a-zA-Z0-9]+)") {
+                Write-Host "Detected: Spotify Track" -ForegroundColor Green
+                $spotifyType = "track"
+                $spotifyId = $matches[1]
+                Write-Host "Converting Spotify track to YouTube URL...`n"
             } else {
-                Write-Host "Error: Could not extract Spotify playlist ID from URL" -ForegroundColor Red
-                exit 1
+                Write-Host "Error: Could not extract Spotify ID from URL" -ForegroundColor Red
+                Write-Host "Supported formats:" -ForegroundColor Yellow
+                Write-Host "  - Playlist: https://open.spotify.com/playlist/..." -ForegroundColor Yellow
+                Write-Host "  - Album: https://open.spotify.com/album/..." -ForegroundColor Yellow
+                Write-Host "  - Track: https://open.spotify.com/track/..." -ForegroundColor Yellow
+                return
             }
             
             Write-Host "Spotify API to YouTube Converter"
             Write-Host "================================="
-            Write-Host "Playlist ID: $playlistId"
+            Write-Host "$($spotifyType.ToUpper()) ID: $spotifyId"
             
             # Get access token via OAuth
             Write-Host "Getting Spotify access token via OAuth..."
@@ -691,22 +777,49 @@ function Get-YouTubePlaylistVideosFallback {
                 exit 1
             }
             
-            # Get playlist info
-            Write-Host "Fetching playlist info..."
-            $playlistInfo = Get-SpotifyPlaylistInfo -PlaylistId $playlistId -AccessToken $accessToken
-            if (-not $playlistInfo) {
-                Write-Host "Failed to get playlist info. Using playlist ID as name." -ForegroundColor Cyan
-                $playlistName = $playlistId
-                $trackCount = "Unknown"
-            } else {
-                $playlistName = $playlistInfo.Name
-                $trackCount = $playlistInfo.TrackCount
-                Write-Host "Playlist: $playlistName" -ForegroundColor Green
+            # Get content info and tracks based on type
+            if ($spotifyType -eq "playlist") {
+                Write-Host "Fetching playlist info..."
+                $playlistInfo = Get-SpotifyPlaylistInfo -PlaylistId $spotifyId -AccessToken $accessToken
+                if (-not $playlistInfo) {
+                    Write-Host "Failed to get playlist info. Using playlist ID as name." -ForegroundColor Cyan
+                    $playlistName = $spotifyId
+                    $trackCount = "Unknown"
+                } else {
+                    $playlistName = $playlistInfo.Name
+                    $trackCount = $playlistInfo.TrackCount
+                    Write-Host "Playlist: $playlistName" -ForegroundColor Green
+                }
+                
+                Write-Host "Fetching playlist tracks..."
+                $tracks = Get-SpotifyTracks -PlaylistId $spotifyId -AccessToken $accessToken
+            } elseif ($spotifyType -eq "album") {
+                Write-Host "Fetching album info..."
+                $albumInfo = Get-SpotifyAlbumInfo -AlbumId $spotifyId -AccessToken $accessToken
+                if (-not $albumInfo) {
+                    Write-Host "Failed to get album info. Using album ID as name." -ForegroundColor Cyan
+                    $playlistName = $spotifyId
+                } else {
+                    $playlistName = $albumInfo.Name
+                    Write-Host "Album: $playlistName" -ForegroundColor Green
+                }
+                
+                Write-Host "Fetching album tracks..."
+                $tracks = Get-SpotifyAlbumTracks -AlbumId $spotifyId -AccessToken $accessToken
+            } elseif ($spotifyType -eq "track") {
+                Write-Host "Fetching track info..."
+                $trackInfo = Get-SpotifyTrackInfo -TrackId $spotifyId -AccessToken $accessToken
+                if (-not $trackInfo) {
+                    Write-Host "Failed to get track info. Using track ID as name." -ForegroundColor Cyan
+                    $playlistName = $spotifyId
+                } else {
+                    $playlistName = $trackInfo.Name
+                    Write-Host "Track: $playlistName" -ForegroundColor Green
+                }
+                
+                # Convert single track to tracks array
+                $tracks = @($trackInfo)
             }
-            
-            # Get tracks
-            Write-Host "Fetching playlist tracks..."
-            $tracks = Get-SpotifyTracks -PlaylistId $playlistId -AccessToken $accessToken
             if ($tracks.Count -eq 0) {
                 Write-Host "No tracks found in playlist. Exiting." -ForegroundColor Red
                 exit 1
