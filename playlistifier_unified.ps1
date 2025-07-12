@@ -51,7 +51,7 @@ if (-not (Test-DirectoryWritable $exeDir)) {
     $dependencyDir = $exeDir
 }
 
-# Always use current working directory for output files
+# Initial output directory (will be checked for writability during playlist processing)
 $outputDir = Get-Location
 
 # Initialize persistent variables outside main loop
@@ -1110,6 +1110,22 @@ function Get-YouTubePlaylistVideosFallback {
             }
             Write-Host "Found $($tracks.Count) tracks" -ForegroundColor Green
             
+            # Ensure we have a writable output directory before creating playlist folder
+            $currentLocation = Get-Location
+            Write-Host "Checking write permissions for: $currentLocation" -ForegroundColor Gray
+            if (-not (Test-DirectoryWritable $currentLocation)) {
+                Write-Host "Current directory is not writable, using user's home directory for output" -ForegroundColor Yellow
+                $userHome = [System.Environment]::GetFolderPath("Personal")
+                $outputDir = Join-Path $userHome "playlistifier"
+                Write-Host "Output directory set to: $outputDir" -ForegroundColor Cyan
+                if (-not (Test-Path $outputDir)) {
+                    New-Item -Path $outputDir -ItemType Directory | Out-Null
+                    Write-Host "Created directory: $outputDir" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "Using current directory for output: $outputDir" -ForegroundColor Green
+            }
+            
             # Create playlist folder immediately
             $cleanPlaylistName = $playlistName -replace '[\u003c\u003e:"/\\|?*]', '_'
             $playlistFolder = Join-Path $outputDir $cleanPlaylistName
@@ -1297,6 +1313,22 @@ function Get-YouTubePlaylistVideosFallback {
             }
             
             Write-Host "Found $($videos.Count) videos" -ForegroundColor Green
+            
+            # Ensure we have a writable output directory before creating playlist folder
+            $currentLocation = Get-Location
+            Write-Host "Checking write permissions for: $currentLocation" -ForegroundColor Gray
+            if (-not (Test-DirectoryWritable $currentLocation)) {
+                Write-Host "Current directory is not writable, using user's home directory for output" -ForegroundColor Yellow
+                $userHome = [System.Environment]::GetFolderPath("Personal")
+                $outputDir = Join-Path $userHome "playlistifier"
+                Write-Host "Output directory set to: $outputDir" -ForegroundColor Cyan
+                if (-not (Test-Path $outputDir)) {
+                    New-Item -Path $outputDir -ItemType Directory | Out-Null
+                    Write-Host "Created directory: $outputDir" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "Using current directory for output: $outputDir" -ForegroundColor Green
+            }
             
             # Create playlist folder immediately
             $cleanPlaylistName = $playlistName -replace '[\u003c\u003e:"/\\|?*]', '_'
