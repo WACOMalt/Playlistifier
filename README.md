@@ -1,15 +1,15 @@
 # Playlistifier v0.2
 
-**Universal Playlist Converter - Spotify & YouTube to MP3**
+**Universal Playlist Converter - Music Streaming Services to MP3**
 
-A powerful, user-friendly tool that converts Spotify playlists, albums, and tracks to downloadable MP3 files by finding matching YouTube videos. Also supports direct YouTube playlist conversion.
+A powerful, user-friendly tool that converts music streaming playlists, albums, and tracks to downloadable MP3 files by finding matching video content. Also supports direct video playlist conversion.
 
 ## ✨ Features
 
-- **🎵 Spotify Support**: Playlists, albums, and individual tracks
-- **📺 YouTube Support**: Playlist extraction and conversion
+- **🎵 Music Streaming Support**: Playlists, albums, and individual tracks
+- **📺 Video Platform Support**: Playlist extraction and conversion
 - **🔐 Secure Authentication**: PKCE OAuth flow (no secrets required)
-- **🎨 Custom Artwork**: Embeds original Spotify artwork and metadata
+- **🎨 Custom Artwork**: Embeds original streaming service artwork and metadata
 - **📁 Smart Organization**: Auto-creates organized folders with proper naming
 - **⚡ Auto-Dependencies**: Downloads yt-dlp and ffmpeg automatically
 - **🛡️ Robust Fallback**: Works from any directory, handles read-only locations
@@ -20,24 +20,24 @@ A powerful, user-friendly tool that converts Spotify playlists, albums, and trac
 1. **Download** the latest release
 2. **Extract** the ZIP file anywhere on your computer
 3. **Run** `Playlistifier.exe`
-4. **Paste** your Spotify or YouTube playlist URL
+4. **Paste** your music streaming or video platform playlist URL
 5. **Enjoy** your downloaded music!
 
 ## 📋 Supported URLs
 
-### Spotify
-- **Playlists**: `https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M`
-- **Albums**: `https://open.spotify.com/album/4yP0hdKOZPNshxUOjY0cZj`
-- **Tracks**: `https://open.spotify.com/track/7ouMYWpwJ422jRcDASZB7P`
+### Music Streaming Services
+- **Playlists**: `https://open.spotify.com/playlist/[playlist_id]`
+- **Albums**: `https://open.spotify.com/album/[album_id]`
+- **Tracks**: `https://open.spotify.com/track/[track_id]`
 
-### YouTube
-- **Playlists**: `https://www.youtube.com/playlist?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG`
+### Video Platforms
+- **Playlists**: `https://www.youtube.com/playlist?list=[playlist_id]`
 
 ## 🔧 How It Works
 
 1. **URL Processing**: Analyzes your playlist URL to determine the source
-2. **Authentication**: For Spotify, opens browser for secure OAuth login
-3. **Track Discovery**: Searches YouTube for matching songs
+2. **Authentication**: For streaming services, opens browser for secure OAuth login
+3. **Track Discovery**: Searches video platforms for matching songs
 4. **Download**: Uses yt-dlp to download high-quality audio
 5. **Enhancement**: Embeds custom artwork and metadata using ffmpeg
 6. **Organization**: Creates clean, organized folders with proper naming
@@ -55,7 +55,7 @@ A powerful, user-friendly tool that converts Spotify playlists, albums, and trac
 ## ⚙️ Download Options
 
 - **Audio Format**: MP3 (320kbps when available)
-- **Video Format**: MP4 (for YouTube playlists)
+- **Video Format**: MP4 (for video platform playlists)
 - **Numbering**: Choose numbered filenames or clean titles
 - **Artwork**: Automatic embedding of album artwork
 - **Metadata**: Full ID3 tags (title, artist, album, track number)
@@ -99,7 +99,7 @@ A powerful, user-friendly tool that converts Spotify playlists, albums, and trac
 - Try copying the URL from your browser address bar
 
 **"Authentication failed"**
-- Ensure you're logged into Spotify in your browser
+- Ensure you're logged into the streaming service in your browser
 - Check that you clicked "Agree" in the authorization page
 - Try restarting the application
 
@@ -122,8 +122,8 @@ A powerful, user-friendly tool that converts Spotify playlists, albums, and trac
 ## 🔄 Version History
 
 ### v0.2 (Current)
-- PKCE OAuth implementation for secure Spotify authentication
-- Custom artwork embedding from Spotify
+- PKCE OAuth implementation for secure streaming service authentication
+- Custom artwork embedding from streaming services
 - Robust directory fallback system
 - Automatic dependency management
 - Interactive interface with Explorer integration
@@ -139,7 +139,7 @@ This project is open source. See the repository for license details.
 
 ## ⚠️ Disclaimer
 
-This tool is for personal use only. Please respect copyright laws and terms of service for Spotify and YouTube. Only download content you have the right to access.
+This tool is for personal use only. Please respect copyright laws and terms of service for all streaming platforms and video services. Only download content you have the right to access.
 
 ---
 
