@@ -58,6 +58,7 @@ $outputDir = Get-Location
 $outputFile = $null
 $playlistSource = $null
 $playlistProcessed = $false
+$spotifyMetadata = $null
 
 # Main execution loop
 do {
@@ -175,6 +176,65 @@ if (-not $useYouTubeAPI) {
     Write-Host "YouTube API key not configured - will use yt-dlp fallback (recommended for most users)" -ForegroundColor Cyan
 }
 
+# Function to download ffmpeg if not present
+function Ensure-FFmpeg {
+    param($ExeDirectory)
+    $ffmpegPath = Join-Path $ExeDirectory "ffmpeg.exe"
+    
+    if (-not (Test-Path $ffmpegPath)) {
+        Write-Host "ffmpeg.exe not found. Downloading..." -ForegroundColor Cyan
+        
+        try {
+            # Download ffmpeg from a direct link
+            $downloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+            $zipPath = Join-Path $ExeDirectory "ffmpeg.zip"
+            
+            Write-Host "Downloading ffmpeg from: $downloadUrl" -ForegroundColor Gray
+            
+            # Use WebClient for compatibility with PS2EXE
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($downloadUrl, $zipPath)
+            
+            if (Test-Path $zipPath) {
+                Write-Host "Extracting ffmpeg..." -ForegroundColor Cyan
+                
+                # Extract the zip file
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+                
+                # Find the ffmpeg.exe file in the zip
+                $ffmpegEntry = $zip.Entries | Where-Object { $_.Name -eq "ffmpeg.exe" } | Select-Object -First 1
+                
+                if ($ffmpegEntry) {
+                    $ffmpegStream = $ffmpegEntry.Open()
+                    $ffmpegFileStream = [System.IO.File]::Create($ffmpegPath)
+                    $ffmpegStream.CopyTo($ffmpegFileStream)
+                    $ffmpegFileStream.Close()
+                    $ffmpegStream.Close()
+                    
+                    Write-Host "ffmpeg.exe extracted successfully!" -ForegroundColor Green
+                } else {
+                    throw "ffmpeg.exe not found in downloaded archive"
+                }
+                
+                $zip.Close()
+                Remove-Item $zipPath -Force
+            } else {
+                throw "Download completed but file not found"
+            }
+        }
+        catch {
+            Write-Host "Failed to download ffmpeg: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Note: Custom artwork embedding will not work without ffmpeg" -ForegroundColor Cyan
+            return $false
+        }
+    } else {
+        Write-Host "ffmpeg.exe found" -ForegroundColor Green
+    }
+    
+    return $true
+}
+
 # Function to download yt-dlp if not present
 function Ensure-YtDlp {
     param($ExeDirectory)
@@ -222,10 +282,84 @@ function Ensure-YtDlp {
 
         # Ensure yt-dlp is available
         $ytDlpAvailable = Ensure-YtDlp -ExeDirectory $dependencyDir
+        
+        # Ensure ffmpeg is available for artwork embedding
+        $ffmpegAvailable = Ensure-FFmpeg -ExeDirectory $dependencyDir
+
+# Function to embed custom artwork and metadata using ffmpeg
+function Set-CustomArtwork {
+    param($FilePath, $ArtworkUrl, $OutputDir, $TrackMetadata = $null)
+    
+    if (-not $ArtworkUrl) {
+        return $false
+    }
+    
+    $ffmpegPath = Join-Path $dependencyDir "ffmpeg.exe"
+    if (-not (Test-Path $ffmpegPath)) {
+        return $false
+    }
+    
+    try {
+        # Download artwork to temporary file
+        $tempArtwork = Join-Path $OutputDir "temp_artwork.jpg"
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($ArtworkUrl, $tempArtwork)
+        
+        if (Test-Path $tempArtwork) {
+            # Use ffmpeg to embed the artwork and metadata
+            $tempOutput = [System.IO.Path]::ChangeExtension($FilePath, ".tmp.mp3")
+            $ffmpegArgs = @(
+                "-i", $FilePath,
+                "-i", $tempArtwork,
+                "-map", "0:a",
+                "-map", "1:0",
+                "-c:a", "copy",
+                "-c:v", "mjpeg",
+                "-disposition:v:0", "attached_pic"
+            )
+            
+            # Add Spotify metadata if available
+            if ($TrackMetadata) {
+                $ffmpegArgs += @(
+                    "-metadata", "title=$($TrackMetadata.Name)",
+                    "-metadata", "artist=$($TrackMetadata.Artists)",
+                    "-metadata", "album=$($TrackMetadata.Album)",
+                    "-metadata", "track=$($TrackMetadata.TrackNumber)"
+                )
+            }
+            
+            $ffmpegArgs += @("-y", $tempOutput)
+            
+            $result = & $ffmpegPath $ffmpegArgs 2>&1
+            
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $tempOutput)) {
+                # Replace original file with updated file
+                Remove-Item $FilePath -Force
+                Move-Item $tempOutput $FilePath
+                Remove-Item $tempArtwork -Force
+                return $true
+            } else {
+                # Clean up temp files on failure
+                if (Test-Path $tempOutput) { Remove-Item $tempOutput -Force }
+                if (Test-Path $tempArtwork) { Remove-Item $tempArtwork -Force }
+                return $false
+            }
+        }
+    }
+    catch {
+        # Clean up temp files on error
+        $tempOutput = [System.IO.Path]::ChangeExtension($FilePath, ".tmp.mp3")
+        if (Test-Path $tempOutput) { Remove-Item $tempOutput -Force }
+        if (Test-Path $tempArtwork) { Remove-Item $tempArtwork -Force }
+        return $false
+    }
+    
+    return $false
+}
 
 # Function to download songs from playlist file
 function Start-DownloadSongs {
-    param($OutputFile, $PlaylistSource, $OutputDir)
+    param($OutputFile, $PlaylistSource, $OutputDir, $SpotifyMetadata = $null)
     
     $ytDlpPath = Join-Path $dependencyDir "yt-dlp.exe"
     
@@ -325,26 +459,113 @@ function Start-DownloadSongs {
         Write-Host "[$($i + 1)/$($urls.Count)] ($progress%) Downloading: $url"
         
         try {
-            if ($useTrackNumbers) {
-                $trackNumber = ($i + 1).ToString().PadLeft($padding, '0')
-                $outputTemplate = "$downloadDir/$trackNumber - %(title)s.%(ext)s"
-                $successMessage = "Downloaded successfully as track $trackNumber"
-            } else {
-                $outputTemplate = "$downloadDir/%(title)s.%(ext)s"
-                $successMessage = "Downloaded successfully"
-            }
+            # Build yt-dlp command with appropriate options
+            $ytDlpArgs = @()
             
             if ($downloadAsAudio) {
-                # Download as audio format preference
-                $result = & $ytDlpPath --extract-audio --audio-format mp3 --audio-quality 0 -o $outputTemplate $url 2>&1
+                $ytDlpArgs += @("--extract-audio", "--audio-format", "mp3", "--audio-quality", "0")
             } else {
-                # Download as video with highest quality
-                $result = & $ytDlpPath -f "bestvideo+bestaudio/best" --merge-output-format mp4 -o $outputTemplate $url 2>&1
+                $ytDlpArgs += @("-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4")
             }
+            
+            # Handle Spotify metadata and custom naming
+            if ($PlaylistSource -eq "Spotify" -and $SpotifyMetadata -and $i -lt $SpotifyMetadata.Count) {
+                $track = $SpotifyMetadata[$i]
+                $trackNumber = ($i + 1).ToString().PadLeft($padding, '0')
+                
+                # Clean track and artist names for filename
+                $cleanTrackName = $track.Name -replace '[\u003c\u003e:"/\\|?*]', '_'
+                $cleanArtistName = $track.Artists -replace '[\u003c\u003e:"/\\|?*]', '_'
+                
+                if ($useTrackNumbers) {
+                    $filename = "$trackNumber - $cleanArtistName - $cleanTrackName.%(ext)s"
+                    $successMessage = "Downloaded successfully as track $trackNumber - $($track.Name)"
+                } else {
+                    $filename = "$cleanArtistName - $cleanTrackName.%(ext)s"
+                    $successMessage = "Downloaded successfully: $($track.Name)"
+                }
+                $outputTemplate = "$downloadDir/$filename"
+                
+                # Add basic metadata tags for Spotify content (we'll add proper metadata with ffmpeg later)
+                if ($downloadAsAudio) {
+                    $ytDlpArgs += @(
+                        "--add-metadata",
+                        "--embed-thumbnail"
+                    )
+                }
+            } else {
+                # Default naming for YouTube content
+                if ($useTrackNumbers) {
+                    $trackNumber = ($i + 1).ToString().PadLeft($padding, '0')
+                    $outputTemplate = "$downloadDir/$trackNumber - %(title)s.%(ext)s"
+                    $successMessage = "Downloaded successfully as track $trackNumber"
+                } else {
+                    $outputTemplate = "$downloadDir/%(title)s.%(ext)s"
+                    $successMessage = "Downloaded successfully"
+                }
+                
+                # Add basic metadata for YouTube content
+                if ($downloadAsAudio) {
+                    $ytDlpArgs += @("--add-metadata", "--embed-thumbnail")
+                }
+            }
+            
+            # Add output template and URL
+            $ytDlpArgs += @("-o", $outputTemplate, $url)
+            
+            # Execute yt-dlp with all arguments
+            $result = & $ytDlpPath $ytDlpArgs 2>&1
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "   ✓ $successMessage" -ForegroundColor Green
                 $downloaded++
+                
+                # Apply custom artwork for Spotify tracks if available
+                if ($PlaylistSource -eq "Spotify" -and $SpotifyMetadata -and $i -lt $SpotifyMetadata.Count) {
+                    $track = $SpotifyMetadata[$i]
+                    if ($track.ArtworkUrl -and $downloadAsAudio) {
+                        # Find the downloaded file
+                        $trackNumber = ($i + 1).ToString().PadLeft($padding, '0')
+                        $cleanTrackName = $track.Name -replace '[\u003c\u003e:"/\\|?*]', '_'
+                        $cleanArtistName = $track.Artists -replace '[\u003c\u003e:"/\\|?*]', '_'
+                        
+                        $expectedFilename = if ($useTrackNumbers) {
+                            "$trackNumber - $cleanArtistName - $cleanTrackName.mp3"
+                        } else {
+                            "$cleanArtistName - $cleanTrackName.mp3"
+                        }
+                        
+                        $downloadedFilePath = Join-Path $downloadDir $expectedFilename
+                        
+                        if (Test-Path $downloadedFilePath) {
+                            Write-Host "   → Embedding custom Spotify artwork and metadata..." -ForegroundColor Cyan
+                            
+                            # Prepare track metadata for ffmpeg
+                            # For albums, use the original album name without year suffix for metadata
+                            $albumNameForMetadata = if ($track.Album) { 
+                                $track.Album 
+                            } elseif ($PlaylistSource -eq "Spotify" -and $playlistName -match "^(.*) \(\d{4}\)$") {
+                                $matches[1]  # Remove year suffix for metadata
+                            } else {
+                                $playlistName
+                            }
+                            
+                            $trackMetadata = @{
+                                Name = $track.Name
+                                Artists = $track.Artists
+                                Album = $albumNameForMetadata
+                                TrackNumber = $i + 1
+                            }
+                            
+                            $artworkResult = Set-CustomArtwork -FilePath $downloadedFilePath -ArtworkUrl $track.ArtworkUrl -OutputDir $downloadDir -TrackMetadata $trackMetadata
+                            if ($artworkResult) {
+                                Write-Host "   ✓ Custom artwork and metadata embedded successfully" -ForegroundColor Green
+                            } else {
+                                Write-Host "   ⚠ Custom artwork embedding failed, using YouTube thumbnail" -ForegroundColor Yellow
+                            }
+                        }
+                    }
+                }
             } else {
                 Write-Host "   ✗ Download failed" -ForegroundColor Red
                 $failed++
@@ -360,6 +581,9 @@ function Start-DownloadSongs {
     Write-Host "Successfully downloaded: $downloaded/$($urls.Count) songs" -ForegroundColor Green
     Write-Host "Failed downloads: $failed/$($urls.Count) songs" -ForegroundColor Red
     Write-Host "Downloaded files are in the '$downloadDir' folder." -ForegroundColor Cyan
+    
+    # Store download directory for later use
+    $global:lastDownloadDir = $downloadDir
 }
 
 # Function to get Spotify access token via OAuth
@@ -485,10 +709,19 @@ function Get-SpotifyAlbumInfo {
     
     try {
         $response = Invoke-RestMethod -Uri "https://api.spotify.com/v1/albums/$AlbumId" -Headers $headers
+        
+        # Extract year from release_date (format: YYYY-MM-DD or YYYY)
+        $releaseYear = ""
+        if ($response.release_date) {
+            $releaseYear = $response.release_date.Substring(0, 4)
+        }
+        
         return @{
             Name = $response.name
             Artist = ($response.artists | ForEach-Object { $_.name }) -join ', '
             TrackCount = $response.total_tracks
+            ReleaseYear = $releaseYear
+            ArtworkUrl = if ($response.images -and $response.images.Count -gt 0) { $response.images[0].url } else { $null }
         }
     }
     catch {
@@ -506,6 +739,10 @@ function Get-SpotifyAlbumTracks {
     $offset = 0
     $limit = 50
     
+    # First get album info to get artwork URL
+    $albumInfo = Get-SpotifyAlbumInfo -AlbumId $AlbumId -AccessToken $AccessToken
+    $artworkUrl = $albumInfo.ArtworkUrl
+    
     do {
         try {
             $response = Invoke-RestMethod -Uri "https://api.spotify.com/v1/albums/$AlbumId/tracks?offset=$offset&limit=$limit" -Headers $headers
@@ -515,6 +752,8 @@ function Get-SpotifyAlbumTracks {
                     $tracks += @{
                         Name = $item.name
                         Artists = $artistNames
+                        Album = $albumInfo.Name
+                        ArtworkUrl = $artworkUrl
                     }
                 }
             }
@@ -541,6 +780,8 @@ function Get-SpotifyTrackInfo {
         return @{
             Name = $response.name
             Artists = $artistNames
+            Album = $response.album.name
+            ArtworkUrl = if ($response.album.images -and $response.album.images.Count -gt 0) { $response.album.images[0].url } else { $null }
         }
     }
     catch {
@@ -586,6 +827,8 @@ function Get-SpotifyTracks {
                     $tracks += @{
                         Name = $item.track.name
                         Artists = $artistNames
+                        Album = $item.track.album.name
+                        ArtworkUrl = if ($item.track.album.images -and $item.track.album.images.Count -gt 0) { $item.track.album.images[0].url } else { $null }
                     }
                 }
             }
@@ -800,8 +1043,13 @@ function Get-YouTubePlaylistVideosFallback {
                     Write-Host "Failed to get album info. Using album ID as name." -ForegroundColor Cyan
                     $playlistName = $spotifyId
                 } else {
-                    $playlistName = $albumInfo.Name
-                    Write-Host "Album: $playlistName" -ForegroundColor Green
+                    # Include release year in album folder name
+                    if ($albumInfo.ReleaseYear) {
+                        $playlistName = "$($albumInfo.Name) ($($albumInfo.ReleaseYear))"
+                    } else {
+                        $playlistName = $albumInfo.Name
+                    }
+                    Write-Host "Album: $($albumInfo.Name) ($($albumInfo.ReleaseYear))" -ForegroundColor Green
                 }
                 
                 Write-Host "Fetching album tracks..."
@@ -835,6 +1083,9 @@ function Get-YouTubePlaylistVideosFallback {
             } else {
                 Write-Host "Using existing directory: $playlistFolder" -ForegroundColor Green
             }
+            
+            # Store playlist directory for later use
+            $global:lastDownloadDir = $playlistFolder
             
             # Prepare output file (inside playlist folder)
             $outputFile = Join-Path $playlistFolder "Songs_$cleanPlaylistName.txt"
@@ -932,6 +1183,9 @@ function Get-YouTubePlaylistVideosFallback {
             Write-Host "Success: $found/$($tracks.Count) tracks" -ForegroundColor Green
             Write-Host "Failed: $failed/$($tracks.Count) tracks" -ForegroundColor Red
 
+            # Store Spotify metadata for download function
+            $spotifyMetadata = $tracks
+            
             # Mark playlist as processed
             $playlistProcessed = $true
 
@@ -1018,6 +1272,9 @@ function Get-YouTubePlaylistVideosFallback {
                 Write-Host "Using existing directory: $playlistFolder" -ForegroundColor Green
             }
             
+            # Store playlist directory for later use
+            $global:lastDownloadDir = $playlistFolder
+            
             # Prepare output file (inside playlist folder)
             $outputFile = Join-Path $playlistFolder "Songs_$cleanPlaylistName.txt"
             
@@ -1062,25 +1319,37 @@ function Get-YouTubePlaylistVideosFallback {
         $restart = $true
         $PlaylistUrl = $null  # Clear the URL so it prompts again
         $playlistProcessed = $false
+        $spotifyMetadata = $null  # Clear Spotify metadata
         Write-Host "`n" # Add some space before restart
     } elseif ($playlistProcessed -and -not [string]::IsNullOrWhiteSpace($PlaylistUrl)) {
         # Show options menu after playlist processing
         Write-Host "`nOptions:" -ForegroundColor Yellow
-        Write-Host "  1 - Restart with a new playlist" -ForegroundColor White
+        Write-Host "  R - Restart with a new playlist" -ForegroundColor White
         Write-Host "  D - Download all found songs using yt-dlp" -ForegroundColor White
+        Write-Host "  E - Open playlist directory in Explorer" -ForegroundColor White
         Write-Host "  Any other key - Exit" -ForegroundColor White
         Write-Host "`nChoose an option: " -NoNewline -ForegroundColor Yellow
         $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         Write-Host $key.Character
-        
-        if ($key.Character -eq '1') {
+
+        if ($key.Character -eq 'e' -or $key.Character -eq 'E') {
+            if ($global:lastDownloadDir -and (Test-Path $global:lastDownloadDir)) {
+                Write-Host "`nOpening directory in Explorer..." -ForegroundColor Cyan
+                Invoke-Expression "explorer.exe '$global:lastDownloadDir'"
+                $restart = $true  # Show menu again
+            } else {
+                Write-Host "`nNo directory found to open." -ForegroundColor Red
+                $restart = $true  # Show menu again
+            }
+        } elseif ($key.Character -eq 'r' -or $key.Character -eq 'R') {
             $restart = $true
             $PlaylistUrl = $null  # Clear the URL so it prompts again
             $playlistProcessed = $false
+            $spotifyMetadata = $null  # Clear Spotify metadata
             Write-Host "`n" # Add some space before restart
         } elseif ($key.Character -eq 'd' -or $key.Character -eq 'D') {
             if ($outputFile -and (Test-Path $outputFile)) {
-                Start-DownloadSongs -OutputFile $outputFile -PlaylistSource $playlistSource -OutputDir $outputDir
+                Start-DownloadSongs -OutputFile $outputFile -PlaylistSource $playlistSource -OutputDir $outputDir -SpotifyMetadata $spotifyMetadata
                 # After download, show the options menu again without re-processing
                 $restart = $true
             } else {

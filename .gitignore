@@ -1,6 +1,14 @@
 # Auto-generated dependencies (created by executable on first run)
 config.json
 yt-dlp.exe
+ffmpeg.exe
+ffmpeg.zip
+
+# Build artifacts
+build/yt-dlp.exe
+build/ffmpeg.exe
+build/ffmpeg.zip
+build/config.json
 
 # Output files and downloads
 Songs_*.txt
