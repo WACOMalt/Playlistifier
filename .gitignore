@@ -10,6 +10,10 @@ build/ffmpeg.exe
 build/ffmpeg.zip
 build/config.json
 
+# Release artifacts
+release/
+Playlistifier_win_v*.zip
+
 # Output files and downloads
 Songs_*.txt
 *.mp3
