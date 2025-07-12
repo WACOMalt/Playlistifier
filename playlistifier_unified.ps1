@@ -158,8 +158,8 @@ if (-not $config) {
 }
 
 # Hardcoded API credentials for OAuth (no user config needed)
+# Using PKCE flow - no client secret required for public applications
 $SPOTIFY_CLIENT_ID = "98780a86674b4edfa5eb772dedbcf8ae"
-$SPOTIFY_CLIENT_SECRET = "af2f1a86d4e84197a424560c11f6ebf1"
 
 $YOUTUBE_API_KEY = $config.youtube.api_key
 
@@ -200,25 +200,37 @@ function Ensure-FFmpeg {
                 
                 # Extract the zip file
                 Add-Type -AssemblyName System.IO.Compression.FileSystem
-                $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-                
-                # Find the ffmpeg.exe file in the zip
-                $ffmpegEntry = $zip.Entries | Where-Object { $_.Name -eq "ffmpeg.exe" } | Select-Object -First 1
-                
-                if ($ffmpegEntry) {
-                    $ffmpegStream = $ffmpegEntry.Open()
-                    $ffmpegFileStream = [System.IO.File]::Create($ffmpegPath)
-                    $ffmpegStream.CopyTo($ffmpegFileStream)
-                    $ffmpegFileStream.Close()
-                    $ffmpegStream.Close()
+                $zip = $null
+                try {
+                    $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
                     
-                    Write-Host "ffmpeg.exe extracted successfully!" -ForegroundColor Green
-                } else {
-                    throw "ffmpeg.exe not found in downloaded archive"
+                    # Find the ffmpeg.exe file in the zip
+                    $ffmpegEntry = $zip.Entries | Where-Object { $_.Name -eq "ffmpeg.exe" } | Select-Object -First 1
+                    
+                    if ($ffmpegEntry) {
+                        $ffmpegStream = $ffmpegEntry.Open()
+                        $ffmpegFileStream = [System.IO.File]::Create($ffmpegPath)
+                        $ffmpegStream.CopyTo($ffmpegFileStream)
+                        $ffmpegFileStream.Close()
+                        $ffmpegStream.Close()
+                        
+                        Write-Host "ffmpeg.exe extracted successfully!" -ForegroundColor Green
+                    } else {
+                        throw "ffmpeg.exe not found in downloaded archive"
+                    }
                 }
-                
-                $zip.Close()
-                Remove-Item $zipPath -Force
+                finally {
+                    # Always clean up the zip file and resources
+                    if ($zip) {
+                        $zip.Dispose()
+                    }
+                    
+                    # Clean up the zip file
+                    if (Test-Path $zipPath) {
+                        Remove-Item $zipPath -Force
+                        Write-Host "Cleaned up temporary zip file" -ForegroundColor Gray
+                    }
+                }
             } else {
                 throw "Download completed but file not found"
             }
@@ -586,11 +598,35 @@ function Start-DownloadSongs {
     $global:lastDownloadDir = $downloadDir
 }
 
-# Function to get Spotify access token via OAuth
-function Get-SpotifyAccessTokenOAuth {
-    param($ClientId, $ClientSecret, $RedirectUri)
+# PKCE helper functions for secure OAuth without client secret
+function New-PKCECodeVerifier {
+    # Generate a cryptographically random code verifier (43-128 characters)
+    $bytes = New-Object byte[] 32
+    [System.Security.Cryptography.RNGCryptoServiceProvider]::Create().GetBytes($bytes)
+    return [Convert]::ToBase64String($bytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
+}
+
+function New-PKCECodeChallenge {
+    param($CodeVerifier)
+    
+    # Create SHA256 hash of code verifier
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $hash = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($CodeVerifier))
+    $sha256.Dispose()
+    
+    # Convert to base64url encoding
+    return [Convert]::ToBase64String($hash) -replace '\+', '-' -replace '/', '_' -replace '=', ''
+}
+
+# Function to get Spotify access token via OAuth with PKCE (no client secret required)
+function Get-SpotifyAccessTokenPKCE {
+    param($ClientId, $RedirectUri)
     
     Write-Host "Starting OAuth authentication..." -ForegroundColor Cyan
+    
+    # Generate PKCE parameters
+    $codeVerifier = New-PKCECodeVerifier
+    $codeChallenge = New-PKCECodeChallenge -CodeVerifier $codeVerifier
     
     # Start local HTTP listener
     $listener = [System.Net.HttpListener]::new()
@@ -605,11 +641,11 @@ function Get-SpotifyAccessTokenOAuth {
         return $null
     }
     
-    # Construct the authorization URL with required scopes
+    # Construct the authorization URL with PKCE parameters
     $scopes = "playlist-modify-public playlist-modify-private user-read-private"
     $encodedScopes = [System.Web.HttpUtility]::UrlEncode($scopes)
     $encodedRedirectUri = [System.Web.HttpUtility]::UrlEncode($RedirectUri)
-    $authUrl = "https://accounts.spotify.com/authorize?response_type=code&client_id=$ClientId&redirect_uri=$encodedRedirectUri&scope=$encodedScopes"
+    $authUrl = "https://accounts.spotify.com/authorize?response_type=code&client_id=$ClientId&redirect_uri=$encodedRedirectUri&scope=$encodedScopes&code_challenge_method=S256&code_challenge=$codeChallenge"
     
     Write-Host "Opening browser for Spotify authorization..." -ForegroundColor Cyan
     Write-Host "If browser doesn't open, go to: $authUrl" -ForegroundColor Yellow
@@ -679,14 +715,14 @@ function Get-SpotifyAccessTokenOAuth {
     
     Write-Host "Authorization code received, exchanging for access token..." -ForegroundColor Cyan
     
-    # Exchange the authorization code for an access token
+    # Exchange the authorization code for an access token using PKCE
     $tokenUri = "https://accounts.spotify.com/api/token"
     $tokenBody = @{
         code = $code
         redirect_uri = $RedirectUri
         grant_type = "authorization_code"
         client_id = $ClientId
-        client_secret = $ClientSecret
+        code_verifier = $codeVerifier
     }
     
     try {
@@ -1011,10 +1047,10 @@ function Get-YouTubePlaylistVideosFallback {
             Write-Host "================================="
             Write-Host "$($spotifyType.ToUpper()) ID: $spotifyId"
             
-            # Get access token via OAuth
+            # Get access token via OAuth with PKCE (no client secret required)
             Write-Host "Getting Spotify access token via OAuth..."
             $redirectUri = "http://127.0.0.1:8888/callback"
-            $accessToken = Get-SpotifyAccessTokenOAuth -ClientId $SPOTIFY_CLIENT_ID -ClientSecret $SPOTIFY_CLIENT_SECRET -RedirectUri $redirectUri
+            $accessToken = Get-SpotifyAccessTokenPKCE -ClientId $SPOTIFY_CLIENT_ID -RedirectUri $redirectUri
             if (-not $accessToken) {
                 Write-Host "Failed to get access token. Exiting." -ForegroundColor Red
                 exit 1
